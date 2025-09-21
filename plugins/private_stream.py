@@ -1,5 +1,6 @@
 import time
 import asyncio
+import urllib.parse
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
@@ -11,23 +12,22 @@ from plugins.avbot import av_verification, is_user_allowed, is_user_joined
 from Script import script
 
 def valid_url(url: str) -> str:
-    """Ensure URL is valid for Telegram buttons, fallback to bot start link."""
+    """Ensure URL is safe for Telegram inline buttons."""
     if url and (url.startswith("http://") or url.startswith("https://")):
         return url
     return f"https://t.me/{BOT_USERNAME}"  # fallback safe URL
 
 @Client.on_message(filters.private & (filters.document | filters.video | filters.audio), group=4)
-async def private_receive_handler(c: Client, m: Message):
+async def private_receive_handler(c: Client, m: Message):                    
     user_id = m.from_user.id
 
     # ✅ Force subscription check
-    if FSUB and not await is_user_joined(c, m):
+    if FSUB and not await is_user_joined(c, m): 
         return
 
     # 🔒 User Ban Check
     is_banned = await db.is_user_blocked(user_id)
     if is_banned:
-        user_data = await db.get_block_data(user_id)
         await m.reply(
             f"🚫 **Yᴏᴜ ᴀʀᴇ ʙᴀɴɴᴇᴅ ғʀᴏᴍ ᴜꜱɪɴɢ ᴛʜɪꜱ ʙᴏᴛ.**\n\n"
             f"🔄 **Cᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ ɪꜰ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.**\n\n@AV_OWNER_BOT"
@@ -59,11 +59,11 @@ async def private_receive_handler(c: Client, m: Message):
         forwarded = await m.forward(chat_id=BIN_CHANNEL)
         hash_str = get_hash(forwarded)
 
-        # Construct links
-        stream = f"{URL}watch/{forwarded.id}/AV_File_{int(time.time())}.mkv?hash={hash_str}"
-        download = f"{URL}{forwarded.id}?hash={hash_str}"
-        file_link = f"https://t.me/{BOT_USERNAME}?start=file_{forwarded.id}"
-        share_link = f"https://t.me/share/url?url={file_link}"
+        # Encode URLs safely
+        stream = f"{URL}watch/{forwarded.id}/AV_File_{int(time.time())}.mkv?hash={urllib.parse.quote(hash_str)}"
+        download = f"{URL}{forwarded.id}?hash={urllib.parse.quote(hash_str)}"
+        file_link = f"https://t.me/{BOT_USERNAME}?start={urllib.parse.quote('file_'+str(forwarded.id))}"
+        share_link = f"https://t.me/share/url?url={urllib.parse.quote(file_link)}"
 
         # ✅ Save file in MongoDB
         await db.files.insert_one({
@@ -83,7 +83,7 @@ async def private_receive_handler(c: Client, m: Message):
             quote=True
         )
 
-        # ✅ Reply to user with buttons (all URLs validated)
+        # ✅ Reply to user with buttons (URLs validated)
         await m.reply_text(
             script.CAPTION_TXT.format(CHANNEL, file_name, file_size, stream, download),
             disable_web_page_preview=True,
