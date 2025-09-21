@@ -1,4 +1,5 @@
 import time
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
@@ -9,12 +10,18 @@ from utils import get_size
 from plugins.avbot import av_verification, is_user_allowed, is_user_joined
 from Script import script
 
+def valid_url(url: str) -> str:
+    """Ensure URL is valid for Telegram buttons, fallback to bot start link."""
+    if url and (url.startswith("http://") or url.startswith("https://")):
+        return url
+    return f"https://t.me/{BOT_USERNAME}"  # fallback safe URL
+
 @Client.on_message(filters.private & (filters.document | filters.video | filters.audio), group=4)
-async def private_receive_handler(c: Client, m: Message):                    
+async def private_receive_handler(c: Client, m: Message):
     user_id = m.from_user.id
 
     # ✅ Force subscription check
-    if FSUB and not await is_user_joined(c, m): 
+    if FSUB and not await is_user_joined(c, m):
         return
 
     # 🔒 User Ban Check
@@ -23,9 +30,11 @@ async def private_receive_handler(c: Client, m: Message):
         user_data = await db.get_block_data(user_id)
         await m.reply(
             f"🚫 **Yᴏᴜ ᴀʀᴇ ʙᴀɴɴᴇᴅ ғʀᴏᴍ ᴜꜱɪɴɢ ᴛʜɪꜱ ʙᴏᴛ.**\n\n"
-            f"🔄 **Cᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ ɪғ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.**\n\n@AV_OWNER_BOT"
+            f"🔄 **Cᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ ɪꜰ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.**\n\n@AV_OWNER_BOT"
         )
         return
+
+    # ❌ File sending limit for non-premium
     if not await db.has_premium_access(user_id):
         is_allowed, remaining_time = await is_user_allowed(user_id)
         if not is_allowed:
@@ -35,18 +44,22 @@ async def private_receive_handler(c: Client, m: Message):
             )
             return
 
-    file_id = m.document or m.video or m.audio
-    file_name = file_id.file_name if file_id.file_name else f"AV_File_{int(time.time())}.mkv"
-    file_size = get_size(file_id.file_size)
+    file_obj = m.document or m.video or m.audio
+    file_name = file_obj.file_name if file_obj.file_name else f"AV_File_{int(time.time())}.mkv"
+    file_size = get_size(file_obj.file_size)
 
+    # ✅ Anti-bot verification for non-premium
     if not await db.has_premium_access(user_id):
         verified = await av_verification(c, m)
         if not verified:
             return
 
     try:
+        # Forward file to BIN_CHANNEL
         forwarded = await m.forward(chat_id=BIN_CHANNEL)
         hash_str = get_hash(forwarded)
+
+        # Construct links
         stream = f"{URL}watch/{forwarded.id}/AV_File_{int(time.time())}.mkv?hash={hash_str}"
         download = f"{URL}{forwarded.id}?hash={hash_str}"
         file_link = f"https://t.me/{BOT_USERNAME}?start=file_{forwarded.id}"
@@ -62,22 +75,31 @@ async def private_receive_handler(c: Client, m: Message):
             "timestamp": time.time()
         })
 
+        # Forwarded file info (optional)
         await forwarded.reply_text(
-            f"Requested By: [{m.from_user.first_name}](tg://user?id={user_id})\nUser ID: {user_id}\nStream Link: {stream}",
+            f"Requested By: [{m.from_user.first_name}](tg://user?id={user_id})\n"
+            f"User ID: {user_id}\nStream Link: {stream}",
             disable_web_page_preview=True,
             quote=True
         )
 
+        # ✅ Reply to user with buttons (all URLs validated)
         await m.reply_text(
             script.CAPTION_TXT.format(CHANNEL, file_name, file_size, stream, download),
             disable_web_page_preview=True,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=stream),
-                 InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=download)],
-                [InlineKeyboardButton("• ɢᴇᴛ ғɪʟᴇ •", url=file_link),
-                 InlineKeyboardButton("• ꜱʜᴀʀᴇ•", url=share_link)],
-                [InlineKeyboardButton("• ᴅᴇʟᴇᴛᴇ ғɪʟᴇ •", callback_data=f"deletefile_{forwarded.id}"),
-                 InlineKeyboardButton("• ᴄʟᴏꜱᴇ •", callback_data="close_data")]
+                [
+                    InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=valid_url(stream)),
+                    InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=valid_url(download))
+                ],
+                [
+                    InlineKeyboardButton("• ɢᴇᴛ ғɪʟᴇ •", url=valid_url(file_link)),
+                    InlineKeyboardButton("• ꜱʜᴀʀᴇ•", url=valid_url(share_link))
+                ],
+                [
+                    InlineKeyboardButton("• ᴅᴇʟᴇᴛᴇ ғɪʟᴇ •", callback_data=f"deletefile_{forwarded.id}"),
+                    InlineKeyboardButton("• ᴄʟᴏꜱᴇ •", callback_data="close_data")
+                ]
             ])
         )
 
