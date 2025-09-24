@@ -46,7 +46,7 @@ async def private_receive_handler(c: Client, m: Message):
 
     file_obj = m.document or m.video or m.audio
     file_name = file_obj.file_name if file_obj.file_name else f"AV_File_{int(time.time())}.mkv"
-    file_size = get_size(file_obj.file_size)
+    file_size = get_size(file_obj)
 
     # ✅ Anti-bot verification for non-premium
     if not await db.has_premium_access(user_id):
@@ -59,9 +59,10 @@ async def private_receive_handler(c: Client, m: Message):
         forwarded = await m.forward(chat_id=BIN_CHANNEL)
         hash_str = get_hash(forwarded)
 
-        # Encode URLs safely
-        stream = f"{URL}watch/{forwarded.id}/AV_File_{int(time.time())}.mkv?hash={urllib.parse.quote(hash_str)}"
-        download = f"{URL}{forwarded.id}?hash={urllib.parse.quote(hash_str)}"
+        # Use original filename in URLs
+        safe_file_name = urllib.parse.quote(file_name)
+        stream = f"{URL}watch/{forwarded.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
+        download = f"{URL}{forwarded.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
         file_link = f"https://t.me/{BOT_USERNAME}?start={urllib.parse.quote('file_'+str(forwarded.id))}"
         share_link = f"https://t.me/share/url?url={urllib.parse.quote(file_link)}"
 
@@ -83,7 +84,7 @@ async def private_receive_handler(c: Client, m: Message):
             quote=True
         )
 
-        # ✅ Reply to user with buttons (URLs validated)
+        # ✅ Reply to user with buttons
         await m.reply_text(
             script.CAPTION_TXT.format(CHANNEL, file_name, file_size, stream, download),
             disable_web_page_preview=True,
