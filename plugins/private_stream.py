@@ -1,13 +1,13 @@
 import time
 import asyncio
 import urllib.parse
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
-from info import URL, BOT_USERNAME, BIN_CHANNEL, FSUB, MAX_FILES, CHANNEL
+from info import URL, BOT_USERNAME, BIN_CHANNEL, CHANNEL, PROTECT_CONTENT, FSUB, MAX_FILES, IS_SHORTLINK, CHANNEL_FILE_CAPTION, HOW_TO_OPEN
 from database.users_db import db
 from web.utils.file_properties import get_hash
-from utils import get_size
+from utils import get_size, get_shortlink
 from plugins.avbot import av_verification, is_user_allowed, is_user_joined
 from Script import script
 
@@ -39,7 +39,7 @@ async def private_receive_handler(c: Client, m: Message):
         is_allowed, remaining_time = await is_user_allowed(user_id)
         if not is_allowed:
             await m.reply_text(
-                f"🚫 **You have already sent {MAX_FILES} files!**\nPlease try again in **{remaining_time} seconds**.",
+                f"🚫 **You have already sent {MAX_FILES} files!**\nPlease try again after **{remaining_time} seconds**.",
                 quote=True
             )
             return
@@ -59,13 +59,25 @@ async def private_receive_handler(c: Client, m: Message):
         forwarded = await m.forward(chat_id=BIN_CHANNEL)
         hash_str = get_hash(forwarded)
 
-        # Simple numeric URLs for streaming/downloading
-        stream = f"{URL}watch/{forwarded.id}?hash={urllib.parse.quote(hash_str)}"
-        download = f"{URL}download/{forwarded.id}?hash={urllib.parse.quote(hash_str)}"
-        file_link = f"https://t.me/{BOT_USERNAME}?start={urllib.parse.quote('file_'+str(forwarded.id))}"
-        share_link = f"https://t.me/share/url?url={urllib.parse.quote(file_link)}"
+        # Encode filename for URL
+        encoded_name = urllib.parse.quote(file_name)
 
-        # ✅ Save file in MongoDB
+        # Build URLs using original filename
+        raw_stream = f"{URL}watch/{forwarded.id}/{encoded_name}?hash={urllib.parse.quote(hash_str)}"
+        raw_download = f"{URL}download/{forwarded.id}/{encoded_name}?hash={urllib.parse.quote(hash_str)}"
+        raw_file_link = f"https://t.me/{BOT_USERNAME}?start=file_{forwarded.id}"
+
+        # Apply shortlink if enabled
+        if IS_SHORTLINK:
+            stream = await get_shortlink(raw_stream)
+            download = await get_shortlink(raw_download)
+            file_link = await get_shortlink(raw_file_link)
+        else:
+            stream = raw_stream
+            download = raw_download
+            file_link = raw_file_link
+
+        # Save file info in MongoDB
         await db.files.insert_one({
             "user_id": user_id,
             "file_name": file_name,
@@ -75,15 +87,7 @@ async def private_receive_handler(c: Client, m: Message):
             "timestamp": time.time()
         })
 
-        # Forwarded file info (optional)
-        await forwarded.reply_text(
-            f"Requested By: [{m.from_user.first_name}](tg://user?id={user_id})\n"
-            f"User ID: {user_id}\nStream Link: {stream}",
-            disable_web_page_preview=True,
-            quote=True
-        )
-
-        # ✅ Reply to user with buttons (URLs safe)
+        # Reply to user with file links and buttons
         await m.reply_text(
             f"✅ Links Generated Successfully!\n\n"
             f"📂 File Name: {file_name}\n"
@@ -94,16 +98,11 @@ async def private_receive_handler(c: Client, m: Message):
             disable_web_page_preview=True,
             reply_markup=InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=valid_url(download)),
-                    InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=valid_url(stream))
+                    InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=stream),
+                    InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=download)
                 ],
                 [
-                    InlineKeyboardButton("• ɢᴇᴛ ғɪʟᴇ •", url=valid_url(file_link)),
-                    InlineKeyboardButton("• ꜱʜᴀʀᴇ •", url=valid_url(share_link))
-                ],
-                [
-                    InlineKeyboardButton("• ᴅᴇʟᴇᴛᴇ ғɪʟᴇ •", callback_data=f"deletefile_{forwarded.id}"),
-                    InlineKeyboardButton("• ᴄʟᴏꜱᴇ •", callback_data="close_data")
+                    InlineKeyboardButton("• ɢᴇᴛ ғɪʟᴇ •", url=file_link)
                 ]
             ])
         )
