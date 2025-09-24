@@ -4,7 +4,7 @@ import urllib.parse
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
-from info import URL, BOT_USERNAME, BIN_CHANNEL, CHANNEL, PROTECT_CONTENT, FSUB, MAX_FILES
+from info import URL, BOT_USERNAME, BIN_CHANNEL, FSUB, MAX_FILES, CHANNEL
 from database.users_db import db
 from web.utils.file_properties import get_hash
 from utils import get_size
@@ -26,10 +26,11 @@ async def private_receive_handler(c: Client, m: Message):
         return
 
     # 🔒 User Ban Check
-    if await db.is_user_blocked(user_id):
+    is_banned = await db.is_user_blocked(user_id)
+    if is_banned:
         await m.reply(
-            f"🚫 **Yᴏᴜ ᴀʀᴇ ʙᴀɴɴᴇᴅ ғʀᴏᴍ ᴜꜱɪɴɢ ᴛʜɪꜱ ʙᴏᴛ.**\n\n"
-            f"🔄 **Cᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ ɪꜰ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.**\n\n@AV_OWNER_BOT"
+            f"🚫 **You are banned from using this bot.**\n\n"
+            f"🔄 **Contact admin if this is a mistake.**\n\n@AV_OWNER_BOT"
         )
         return
 
@@ -38,14 +39,14 @@ async def private_receive_handler(c: Client, m: Message):
         is_allowed, remaining_time = await is_user_allowed(user_id)
         if not is_allowed:
             await m.reply_text(
-                f"🚫 **Yᴏᴜ ʜᴀᴠᴇ ᴀʟʀᴇᴀᴅʏ ꜱᴇɴᴛ {MAX_FILES} ғɪʟᴇꜱ!**\nPʟᴇᴀꜱᴇ **{remaining_time} Sᴇᴄᴏɴᴅꜱ** ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ।",
+                f"🚫 **You have already sent {MAX_FILES} files!**\nPlease try again in **{remaining_time} seconds**.",
                 quote=True
             )
             return
 
     file_obj = m.document or m.video or m.audio
     file_name = file_obj.file_name if file_obj.file_name else f"AV_File_{int(time.time())}.mkv"
-    file_size = get_size(file_obj.file_size or 0)  # ✅ Fix: get actual size in bytes
+    file_size = get_size(file_obj.file_size)
 
     # ✅ Anti-bot verification for non-premium
     if not await db.has_premium_access(user_id):
@@ -58,9 +59,9 @@ async def private_receive_handler(c: Client, m: Message):
         forwarded = await m.forward(chat_id=BIN_CHANNEL)
         hash_str = get_hash(forwarded)
 
-        # Encode URLs safely
-        stream = f"{URL}watch/{forwarded.id}/{urllib.parse.quote(file_name)}?hash={urllib.parse.quote(hash_str)}"
-        download = f"{URL}{forwarded.id}?hash={urllib.parse.quote(hash_str)}"
+        # Simple numeric URLs for streaming/downloading
+        stream = f"{URL}watch/{forwarded.id}?hash={urllib.parse.quote(hash_str)}"
+        download = f"{URL}download/{forwarded.id}?hash={urllib.parse.quote(hash_str)}"
         file_link = f"https://t.me/{BOT_USERNAME}?start={urllib.parse.quote('file_'+str(forwarded.id))}"
         share_link = f"https://t.me/share/url?url={urllib.parse.quote(file_link)}"
 
@@ -82,18 +83,23 @@ async def private_receive_handler(c: Client, m: Message):
             quote=True
         )
 
-        # ✅ Reply to user with buttons (URLs validated)
+        # ✅ Reply to user with buttons (URLs safe)
         await m.reply_text(
-            script.CAPTION_TXT.format(CHANNEL, file_name, file_size, stream, download),
+            f"✅ Links Generated Successfully!\n\n"
+            f"📂 File Name: {file_name}\n"
+            f"📊 File Size: {file_size}\n\n"
+            f"📥 Download: {download}\n"
+            f"🎬 Stream: {stream}\n\n"
+            f"📢 Join {CHANNEL} for updates!",
             disable_web_page_preview=True,
             reply_markup=InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=valid_url(stream)),
-                    InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=valid_url(download))
+                    InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=valid_url(download)),
+                    InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=valid_url(stream))
                 ],
                 [
                     InlineKeyboardButton("• ɢᴇᴛ ғɪʟᴇ •", url=valid_url(file_link)),
-                    InlineKeyboardButton("• ꜱʜᴀʀᴇ•", url=valid_url(share_link))
+                    InlineKeyboardButton("• ꜱʜᴀʀᴇ •", url=valid_url(share_link))
                 ],
                 [
                     InlineKeyboardButton("• ᴅᴇʟᴇᴛᴇ ғɪʟᴇ •", callback_data=f"deletefile_{forwarded.id}"),
@@ -105,5 +111,3 @@ async def private_receive_handler(c: Client, m: Message):
     except FloodWait as e:
         await asyncio.sleep(e.value)
         await c.send_message(BIN_CHANNEL, f"⚠️ FloodWait: {e.value}s from {m.from_user.first_name}")
-    except Exception as e:
-        await m.reply_text(f"❌ Error: {e}")
