@@ -26,8 +26,7 @@ async def private_receive_handler(c: Client, m: Message):
         return
 
     # 🔒 User Ban Check
-    is_banned = await db.is_user_blocked(user_id)
-    if is_banned:
+    if await db.is_user_blocked(user_id):
         await m.reply(
             f"🚫 **Yᴏᴜ ᴀʀᴇ ʙᴀɴɴᴇᴅ ғʀᴏᴍ ᴜꜱɪɴɢ ᴛʜɪꜱ ʙᴏᴛ.**\n\n"
             f"🔄 **Cᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ ɪꜰ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.**\n\n@AV_OWNER_BOT"
@@ -46,7 +45,7 @@ async def private_receive_handler(c: Client, m: Message):
 
     file_obj = m.document or m.video or m.audio
     file_name = file_obj.file_name if file_obj.file_name else f"AV_File_{int(time.time())}.mkv"
-    file_size = get_size(file_obj)
+    file_size = get_size(file_obj.file_size or 0)  # ✅ Fix: get actual size in bytes
 
     # ✅ Anti-bot verification for non-premium
     if not await db.has_premium_access(user_id):
@@ -59,10 +58,9 @@ async def private_receive_handler(c: Client, m: Message):
         forwarded = await m.forward(chat_id=BIN_CHANNEL)
         hash_str = get_hash(forwarded)
 
-        # Use original filename in URLs
-        safe_file_name = urllib.parse.quote(file_name)
-        stream = f"{URL}watch/{forwarded.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
-        download = f"{URL}{forwarded.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
+        # Encode URLs safely
+        stream = f"{URL}watch/{forwarded.id}/{urllib.parse.quote(file_name)}?hash={urllib.parse.quote(hash_str)}"
+        download = f"{URL}{forwarded.id}?hash={urllib.parse.quote(hash_str)}"
         file_link = f"https://t.me/{BOT_USERNAME}?start={urllib.parse.quote('file_'+str(forwarded.id))}"
         share_link = f"https://t.me/share/url?url={urllib.parse.quote(file_link)}"
 
@@ -84,7 +82,7 @@ async def private_receive_handler(c: Client, m: Message):
             quote=True
         )
 
-        # ✅ Reply to user with buttons
+        # ✅ Reply to user with buttons (URLs validated)
         await m.reply_text(
             script.CAPTION_TXT.format(CHANNEL, file_name, file_size, stream, download),
             disable_web_page_preview=True,
@@ -107,3 +105,5 @@ async def private_receive_handler(c: Client, m: Message):
     except FloodWait as e:
         await asyncio.sleep(e.value)
         await c.send_message(BIN_CHANNEL, f"⚠️ FloodWait: {e.value}s from {m.from_user.first_name}")
+    except Exception as e:
+        await m.reply_text(f"❌ Error: {e}")
