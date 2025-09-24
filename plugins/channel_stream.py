@@ -1,94 +1,109 @@
+import time
 import asyncio
 import urllib.parse
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
-from info import BIN_CHANNEL, URL, CHANNEL, BOT_USERNAME, IS_SHORTLINK, CHANNEL_FILE_CAPTION, HOW_TO_OPEN
-from web.utils.file_properties import get_hash
-from utils import get_size, get_shortlink
+from info import URL, BOT_USERNAME, BIN_CHANNEL, CHANNEL, PROTECT_CONTENT, FSUB, MAX_FILES
 from database.users_db import db
+from web.utils.file_properties import get_hash
+from utils import get_size
+from plugins.avbot import av_verification, is_user_allowed, is_user_joined
+from Script import script
 
-@Client.on_message(filters.channel & (filters.document | filters.video) & ~filters.forwarded, group=-1)
-async def channel_receive_handler(bot: Client, broadcast: Message):
-    try:
-        chat_id = broadcast.chat.id
+def valid_url(url: str) -> str:
+    """Ensure URL is safe for Telegram inline buttons."""
+    if url and (url.startswith("http://") or url.startswith("https://")):
+        return url
+    return f"https://t.me/{BOT_USERNAME}"  # fallback safe URL
 
-        # 🚫 Check if channel is banned
-        if str(chat_id).startswith("-100"):
-            is_banned = await db.is_channel_blocked(chat_id)
-            if is_banned:
-                try:
-                    await bot.send_message(
-                        chat_id,
-                        f"🚫 **Tʜɪꜱ ᴄʜᴀɴɴᴇʟ ɪꜱ ʙᴀɴɴᴇᴅ ғʀᴏᴍ ᴜꜱɪɴɢ ᴛʜᴇ ʙᴏᴛ.**\n\n"
-                        f"🔄 **Cᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ ɪꜰ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.**\n\n@AV_OWNER_BOT"
-                    )
-                except:
-                    pass
-                await bot.leave_chat(chat_id)
-                return
+@Client.on_message(filters.private & (filters.document | filters.video | filters.audio), group=4)
+async def private_receive_handler(c: Client, m: Message):                    
+    user_id = m.from_user.id
 
-        file = broadcast.document or broadcast.video
-        if not file:
+    # ✅ Force subscription check
+    if FSUB and not await is_user_joined(c, m): 
+        return
+
+    # 🔒 User Ban Check
+    is_banned = await db.is_user_blocked(user_id)
+    if is_banned:
+        await m.reply(
+            f"🚫 **Yᴏᴜ ᴀʀᴇ ʙᴀɴɴᴇᴅ ғʀᴏᴍ ᴜꜱɪɴɢ ᴛʜɪꜱ ʙᴏᴛ.**\n\n"
+            f"🔄 **Cᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ ɪꜰ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.**\n\n@AV_OWNER_BOT"
+        )
+        return
+
+    # ❌ File sending limit for non-premium
+    if not await db.has_premium_access(user_id):
+        is_allowed, remaining_time = await is_user_allowed(user_id)
+        if not is_allowed:
+            await m.reply_text(
+                f"🚫 **Yᴏᴜ ʜᴀᴠᴇ ᴀʟʀᴇᴀᴅʏ ꜱᴇɴᴛ {MAX_FILES} ғɪʟᴇꜱ!**\nPʟᴇᴀꜱᴇ **{remaining_time} Sᴇᴄᴏɴᴅꜱ** ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ।",
+                quote=True
+            )
             return
 
-        # ✅ Original filename and size
-        file_name = file.file_name if file.file_name else f"Channel_File_{int(time.time())}.mkv"
-        file_size = get_size(file.file_size)
+    file_obj = m.document or m.video or m.audio
+    file_name = file_obj.file_name if file_obj.file_name else f"AV_File_{int(time.time())}.mkv"
+    file_size = get_size(file_obj.file_size)  # ✅ Pass actual size
 
-        # Forward to BIN_CHANNEL
-        msg = await broadcast.forward(chat_id=BIN_CHANNEL)
-        hash_str = get_hash(msg)
+    # ✅ Anti-bot verification for non-premium
+    if not await db.has_premium_access(user_id):
+        verified = await av_verification(c, m)
+        if not verified:
+            return
 
-        # Safe URL encoding
+    try:
+        # Forward file to BIN_CHANNEL
+        forwarded = await m.forward(chat_id=BIN_CHANNEL)
+        hash_str = get_hash(forwarded)
+
+        # Encode URLs safely with original filename
         safe_file_name = urllib.parse.quote(file_name)
-        raw_stream = f"{URL}watch/{msg.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
-        raw_download = f"{URL}{msg.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
-        raw_file_link = f"https://t.me/{BOT_USERNAME}?start=file_{msg.id}"
+        stream = f"{URL}watch/{forwarded.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
+        download = f"{URL}{forwarded.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
+        file_link = f"https://t.me/{BOT_USERNAME}?start={urllib.parse.quote('file_'+str(forwarded.id))}"
+        share_link = f"https://t.me/share/url?url={urllib.parse.quote(file_link)}"
 
-        # Shortlink handling
-        if IS_SHORTLINK:
-            stream = await get_shortlink(raw_stream)
-            download = await get_shortlink(raw_download)
-            file_link = await get_shortlink(raw_file_link)
-        else:
-            stream = raw_stream
-            download = raw_download
-            file_link = raw_file_link
+        # ✅ Save file in MongoDB
+        await db.files.insert_one({
+            "user_id": user_id,
+            "file_name": file_name,
+            "file_size": file_size,
+            "file_id": forwarded.id,
+            "hash": hash_str,
+            "timestamp": time.time()
+        })
 
-        # Update channel message caption
-        new_caption = CHANNEL_FILE_CAPTION.format(CHANNEL, file_name)
-        buttons_list = [
-            [
-                InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=stream),
-                InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=download)
-            ],
-            [
-                InlineKeyboardButton("• ᴄʜᴇᴄᴋ ʜᴇʀᴇ ᴛᴏ ɢᴇᴛ ғɪʟᴇ •", url=file_link)
-            ]
-        ]
-        if IS_SHORTLINK:
-            buttons_list.append([InlineKeyboardButton("• ʜᴏᴡ ᴛᴏ ᴏᴘᴇɴ •", url=HOW_TO_OPEN)])
-
-        buttons = InlineKeyboardMarkup(buttons_list)
-
-        await bot.edit_message_caption(
-            chat_id=broadcast.chat.id,
-            message_id=broadcast.id,
-            caption=new_caption,
-            reply_markup=buttons,
-            parse_mode=enums.ParseMode.HTML
+        # Forwarded file info (optional)
+        await forwarded.reply_text(
+            f"Requested By: [{m.from_user.first_name}](tg://user?id={user_id})\n"
+            f"User ID: {user_id}\nStream Link: {stream}",
+            disable_web_page_preview=True,
+            quote=True
         )
 
-    except asyncio.exceptions.TimeoutError:
-        print("Request Timed Out! Retrying...")
-        await asyncio.sleep(5)
-        await channel_receive_handler(bot, broadcast)
+        # ✅ Reply to user with buttons
+        await m.reply_text(
+            script.CAPTION_TXT.format(CHANNEL, file_name, file_size, stream, download),
+            disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=valid_url(stream)),
+                    InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=valid_url(download))
+                ],
+                [
+                    InlineKeyboardButton("• ɢᴇᴛ ғɪʟᴇ •", url=valid_url(file_link)),
+                    InlineKeyboardButton("• ꜱʜᴀʀᴇ•", url=valid_url(share_link))
+                ],
+                [
+                    InlineKeyboardButton("• ᴅᴇʟᴇᴛᴇ ғɪʟᴇ •", callback_data=f"deletefile_{forwarded.id}"),
+                    InlineKeyboardButton("• ᴄʟᴏꜱᴇ •", callback_data="close_data")
+                ]
+            ])
+        )
 
-    except FloodWait as w:
-        print(f"Sleeping for {w.value}s due to FloodWait")
-        await asyncio.sleep(w.value)
-
-    except Exception as e:
-        await bot.send_message(chat_id=BIN_CHANNEL, text=f"❌ **Error:** `{e}`", disable_web_page_preview=True)
-        print(f"❌ Can't edit channel message! Error: {e}")
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await c.send_message(BIN_CHANNEL, f"⚠️ FloodWait: {e.value}s from {m.from_user.first_name}")
