@@ -1,10 +1,9 @@
 import time
 import asyncio
-import urllib.parse
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.errors import FloodWait
-from info import URL, BOT_USERNAME, BIN_CHANNEL, CHANNEL, PROTECT_CONTENT, FSUB, MAX_FILES
+from info import URL, BOT_USERNAME, BIN_CHANNEL, MAX_FILES, FSUB, CHANNEL
 from database.users_db import db
 from web.utils.file_properties import get_hash
 from utils import get_size
@@ -15,7 +14,7 @@ def valid_url(url: str) -> str:
     """Ensure URL is safe for Telegram inline buttons."""
     if url and (url.startswith("http://") or url.startswith("https://")):
         return url
-    return f"https://t.me/{BOT_USERNAME}"  # fallback safe URL
+    return f"https://t.me/{BOT_USERNAME}"  # fallback
 
 @Client.on_message(filters.private & (filters.document | filters.video | filters.audio), group=4)
 async def private_receive_handler(c: Client, m: Message):                    
@@ -26,29 +25,29 @@ async def private_receive_handler(c: Client, m: Message):
         return
 
     # 🔒 User Ban Check
-    is_banned = await db.is_user_blocked(user_id)
-    if is_banned:
+    if await db.is_user_blocked(user_id):
         await m.reply(
-            f"🚫 **Yᴏᴜ ᴀʀᴇ ʙᴀɴɴᴇᴅ ғʀᴏᴍ ᴜꜱɪɴɢ ᴛʜɪꜱ ʙᴏᴛ.**\n\n"
-            f"🔄 **Cᴏɴᴛᴀᴄᴛ ᴀᴅᴍɪɴ ɪꜰ ʏᴏᴜ ᴛʜɪɴᴋ ᴛʜɪꜱ ɪꜱ ᴀ ᴍɪꜱᴛᴀᴋᴇ.**\n\n@AV_OWNER_BOT"
+            f"🚫 **You are banned from using this bot.**\n\n"
+            f"🔄 Contact admin if you think this is a mistake.\n\n@AV_OWNER_BOT"
         )
         return
 
-    # ❌ File sending limit for non-premium
+    # ❌ File sending limit for non-premium users
     if not await db.has_premium_access(user_id):
         is_allowed, remaining_time = await is_user_allowed(user_id)
         if not is_allowed:
             await m.reply_text(
-                f"🚫 **Yᴏᴜ ʜᴀᴠᴇ ᴀʟʀᴇᴀᴅʏ ꜱᴇɴᴛ {MAX_FILES} ғɪʟᴇꜱ!**\nPʟᴇᴀꜱᴇ **{remaining_time} Sᴇᴄᴏɴᴅꜱ** ᴛʀʏ ᴀɢᴀɪɴ ʟᴀᴛᴇʀ।",
+                f"🚫 **You have already sent {MAX_FILES} files!**\n"
+                f"Please wait **{remaining_time} seconds** before trying again.",
                 quote=True
             )
             return
 
     file_obj = m.document or m.video or m.audio
     file_name = file_obj.file_name if file_obj.file_name else f"AV_File_{int(time.time())}.mkv"
-    file_size = get_size(file_obj.file_size)  # ✅ Pass actual size
+    file_size = get_size(file_obj.file_size)  # ✅ Pass numeric size
 
-    # ✅ Anti-bot verification for non-premium
+    # ✅ Anti-bot verification for non-premium users
     if not await db.has_premium_access(user_id):
         verified = await av_verification(c, m)
         if not verified:
@@ -59,14 +58,14 @@ async def private_receive_handler(c: Client, m: Message):
         forwarded = await m.forward(chat_id=BIN_CHANNEL)
         hash_str = get_hash(forwarded)
 
-        # Encode URLs safely with original filename
-        safe_file_name = urllib.parse.quote(file_name)
-        stream = f"{URL}watch/{forwarded.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
-        download = f"{URL}{forwarded.id}/{safe_file_name}?hash={urllib.parse.quote(hash_str)}"
-        file_link = f"https://t.me/{BOT_USERNAME}?start={urllib.parse.quote('file_'+str(forwarded.id))}"
-        share_link = f"https://t.me/share/url?url={urllib.parse.quote(file_link)}"
+        # ✅ Generate stream and download links using only ID
+        stream = f"{URL}watch/{forwarded.id}?hash={hash_str}"
+        download = f"{URL}{forwarded.id}?hash={hash_str}"
 
-        # ✅ Save file in MongoDB
+        # Telegram start link for sharing
+        file_link = f"https://t.me/{BOT_USERNAME}?start=file_{forwarded.id}"
+
+        # Save file info in MongoDB
         await db.files.insert_one({
             "user_id": user_id,
             "file_name": file_name,
@@ -76,34 +75,39 @@ async def private_receive_handler(c: Client, m: Message):
             "timestamp": time.time()
         })
 
-        # Forwarded file info (optional)
-        await forwarded.reply_text(
-            f"Requested By: [{m.from_user.first_name}](tg://user?id={user_id})\n"
-            f"User ID: {user_id}\nStream Link: {stream}",
-            disable_web_page_preview=True,
-            quote=True
-        )
+        # ✅ Send caption with interface like preferred style
+        caption_text = f"""✅ Links Generated Successfully!
 
-        # ✅ Reply to user with buttons
+📂 File Name: {file_name}
+
+📊 File Size: {file_size}
+
+📥 Download: {download}
+
+🎬 Stream: {stream}
+
+📢 Join @KR_BotX for updates!"""
+
+        # Inline buttons
+        buttons = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("📥 Download", url=download),
+                InlineKeyboardButton("🎬 Stream", url=stream)
+            ],
+            [
+                InlineKeyboardButton("🔗 Share Link", url=file_link)
+            ]
+        ])
+
         await m.reply_text(
-            script.CAPTION_TXT.format(CHANNEL, file_name, file_size, stream, download),
+            caption_text,
             disable_web_page_preview=True,
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("• ꜱᴛʀᴇᴀᴍ •", url=valid_url(stream)),
-                    InlineKeyboardButton("• ᴅᴏᴡɴʟᴏᴀᴅ •", url=valid_url(download))
-                ],
-                [
-                    InlineKeyboardButton("• ɢᴇᴛ ғɪʟᴇ •", url=valid_url(file_link)),
-                    InlineKeyboardButton("• ꜱʜᴀʀᴇ•", url=valid_url(share_link))
-                ],
-                [
-                    InlineKeyboardButton("• ᴅᴇʟᴇᴛᴇ ғɪʟᴇ •", callback_data=f"deletefile_{forwarded.id}"),
-                    InlineKeyboardButton("• ᴄʟᴏꜱᴇ •", callback_data="close_data")
-                ]
-            ])
+            reply_markup=buttons
         )
 
     except FloodWait as e:
         await asyncio.sleep(e.value)
         await c.send_message(BIN_CHANNEL, f"⚠️ FloodWait: {e.value}s from {m.from_user.first_name}")
+
+    except Exception as e:
+        await c.send_message(BIN_CHANNEL, f"❌ Error: `{e}`")
