@@ -20,32 +20,49 @@ BATCH_FILES = {}
 
 @Client.on_message(filters.command("start") & filters.incoming)
 async def start(client, message):
+    if not message.from_user:
+        # Ignore cases where from_user is None (like channel posts)
+        return
+
     user_id = message.from_user.id
     mention = message.from_user.mention
     me2 = (await client.get_me()).mention
+
     if FSUB:
         if not await is_user_joined(client, message):
             return
+
     if not await db.is_user_exist(user_id):
         await db.add_user(user_id, message.from_user.first_name)
-        await client.send_message(LOG_CHANNEL, script.LOG_TEXT.format(me2, user_id, mention))
+        await client.send_message(
+            LOG_CHANNEL,
+            script.LOG_TEXT.format(me2, user_id, mention)
+        )
+
     if len(message.command) == 1 or message.command[1] == "start":
-        buttons = [[
-            InlineKeyboardButton('• ᴜᴘᴅᴀᴛᴇᴅ •', url=CHANNEL),
-            InlineKeyboardButton('• sᴜᴘᴘᴏʀᴛ •', url=SUPPORT)
-        ], [
-            InlineKeyboardButton('• ʜᴇʟᴘ •', callback_data='help'),
-            InlineKeyboardButton('• ᴀʙᴏᴜᴛ •', callback_data='about')
-        ],[
-            InlineKeyboardButton('✨ ʙᴜʏ ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ : ʀᴇᴍᴏᴠᴇ ᴀᴅꜱ ✨', callback_data="premium_info")
-        ]]
+        buttons = [
+            [
+                InlineKeyboardButton('• ᴜᴘᴅᴀᴛᴇᴅ •', url=CHANNEL),
+                InlineKeyboardButton('• sᴜᴘᴘᴏʀᴛ •', url=SUPPORT)
+            ],
+            [
+                InlineKeyboardButton('• ʜᴇʟᴘ •', callback_data='help'),
+                InlineKeyboardButton('• ᴀʙᴏᴜᴛ •', callback_data='about')
+            ],
+            [
+                InlineKeyboardButton(
+                    '✨ ʙᴜʏ ꜱᴜʙꜱᴄʀɪᴘᴛɪᴏɴ : ʀᴇᴍᴏᴠᴇ ᴀᴅꜱ ✨',
+                    callback_data="premium_info"
+                )
+            ]
+        ]
         reply_markup = InlineKeyboardMarkup(buttons)
+
         await message.reply_photo(
             photo=PICS,
             caption=script.START_TXT.format(message.from_user.mention, BOT_USERNAME),
             reply_markup=reply_markup
-        )
-        return
+		)
 
     # ✅ Handle /start file_<id>
     msg = message.command[1]
